@@ -1,0 +1,11 @@
+dbt_config:
+  account_id: YOUR_DBT_CLOUD_ACCOUNT_ID
+  api_token: YOUR_DBT_CLOUD_API_TOKEN
+  job_id: YOUR_DBT_CLOUD_JOB_ID
+email_config:
+  password: YOUR_APP_PASSWORD
+  recipient_email: sharwari.shinde@dynpro.com
+  sender_email: ateeqh.rehman@dynpro.com
+  smtp_port: 587
+  smtp_server: smtp.office365.com
+  subject: DBT Cloud Job Notification

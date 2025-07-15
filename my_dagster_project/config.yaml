@@ -1,0 +1,16 @@
+email_config:
+  sender_email: "ateeqh.rehman@dynpro.com"
+  password: "Habeeb@123"  # Use an app password, not your main password
+  recipient_email: "sharwari.shinde@dynpro.com"
+  subject: "Dagster Notification"
+  message: "This is a test notification from Dagster! Sent on July 14, 2025."
+  smtp_server: "smtp.office365.com"
+  smtp_port: 587
+
+
+# DBT Cloud configuration
+dbt_config:
+  api_token: "dbtu_eSYPMSIP9HgMU6DfDOs2kz-grNCJvDgIw0VB_ZZFn2bpxbd2ng"  # DBT Cloud API token
+  account_id: "70471823461483"  # DBT Cloud account ID
+  job_id: "70471823472253"  # DBT Cloud job ID
+  skip_dbt: false  # Set to true to skip DBT Cloud job execution
