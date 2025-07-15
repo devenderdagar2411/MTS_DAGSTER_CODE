@@ -21,8 +21,9 @@ class EmailService:
         status_color = "#28a745" if is_success else "#dc3545"
         
         # Get job details
-        job_name = job_result.get('job_name', 'Unknown Job')
-        environment = job_result.get('environment', 'Unknown Environment')
+        job_id = job_result.get('job_id', 'Unknown Job ID')
+        git_branch = job_result.get('git_branch', 'Unknown Branch')
+        environment = git_branch
         run_id = job_result.get('run_id', 'N/A')
         finished_at = job_result.get('finished_at', 'N/A')
 
@@ -35,8 +36,8 @@ class EmailService:
                 <h3 style="margin-top: 0;">Job Details</h3>
                 <table style="width: 100%; border-collapse: collapse;">
                     <tr>
-                        <td style="padding: 8px; border-bottom: 1px solid #dee2e6;"><strong>Job Name:</strong></td>
-                        <td style="padding: 8px; border-bottom: 1px solid #dee2e6;">{job_name}</td>
+                        <td style="padding: 8px; border-bottom: 1px solid #dee2e6;"><strong>Job ID:</strong></td>
+                        <td style="padding: 8px; border-bottom: 1px solid #dee2e6;">{job_id}</td>
                     </tr>
                     <tr>
                         <td style="padding: 8px; border-bottom: 1px solid #dee2e6;"><strong>Environment:</strong></td>
@@ -100,9 +101,9 @@ class EmailService:
         
         # Set email headers with detailed job information
         status_prefix = "✅ Success" if is_success else "❌ Failed"
-        job_name = job_result.get('job_name', 'Unknown Job')
-        environment = job_result.get('environment', 'Unknown Environment')
-        msg["Subject"] = f"DBT Cloud Job {status_prefix} - {job_name} ({environment})"
+        job_id = job_result.get('job_id', 'Unknown Job ID')
+        environment = job_result.get('git_branch', 'Unknown Branch')
+        msg["Subject"] = f"DBT Cloud Job {status_prefix} - {job_id} (Environment: {environment})"
         msg["From"] = self.sender_email
         msg["To"] = recipient_email
         
