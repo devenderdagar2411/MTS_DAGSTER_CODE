@@ -20,7 +20,10 @@ from dagster import (
     graph,
     ResourceDefinition,
     OpExecutionContext, # Added for type hinting
-    get_dagster_logger # Added for logging within ops
+    get_dagster_logger, # Added for logging within ops
+    resource,
+    ConfigurableResource,
+    Definitions
 )
 
 # Add the project root to the Python path to resolve sibling imports like 'resources'
@@ -32,9 +35,21 @@ if project_root not in sys.path:
 # Import your EmailService class (assuming it's still located here)
 from my_dagster_project.services.email_service import EmailService
 
-# Import your resource definitions from the new resources.py file
-# We are importing the @resource decorated function directly
-from resources.resources import email_service_resource
+# Define configurable resources using modern Dagster approach
+class DBTCloudResource(ConfigurableResource):
+    api_token: str
+    account_id: str
+    job_id: str
+    skip_dbt: bool = False
+
+class EmailResource(ConfigurableResource):
+    sender_email: str
+    password: str
+    recipient_email: str
+    subject: str = "Dagster Notification"
+    message: str = "This is a test notification from Dagster!"
+    smtp_server: str = "smtp.office365.com"
+    smtp_port: int = 587
 
 # Email configuration class using dagster Config
 class EmailConfig(Config):
@@ -53,40 +68,39 @@ class DBTConfig(Config):
     job_id: str = os.getenv("DBT_CLOUD_JOB_ID", "YOUR_DBT_CLOUD_JOB_ID")
     skip_dbt: bool = False  # Set to True to skip DBT Cloud job execution
 
-@op(out=Out(int), required_resource_keys={"dbt_config"})
-def trigger_dbt_cloud_job(context: OpExecutionContext):
+@op(out=Out(int))
+def trigger_dbt_cloud_job(context: OpExecutionContext, dbt_config: DBTCloudResource):
     """Trigger a dbt Cloud job run or generate mock run ID."""
-    config = context.resources.dbt_config
     
     # Debug: Print credentials for troubleshooting
-    context.log.info(f"API Token: {config.api_token[:5]}...{config.api_token[-5:]} (redacted middle)")
-    context.log.info(f"Account ID: {config.account_id}")
-    context.log.info(f"Job ID: {config.job_id}")
+    context.log.info(f"API Token: {dbt_config.api_token[:5]}...{dbt_config.api_token[-5:]} (redacted middle)")
+    context.log.info(f"Account ID: {dbt_config.account_id}")
+    context.log.info(f"Job ID: {dbt_config.job_id}")
     
     # Check if we should skip DBT Cloud job execution
-    if config.skip_dbt:
+    if dbt_config.skip_dbt:
         context.log.info("Skipping DBT Cloud job execution and using mock run ID")
         mock_run_id = 9999
         return mock_run_id
     
     # Validate credentials before making API call
-    if not config.api_token or config.api_token == "YOUR_DBT_CLOUD_API_TOKEN":
+    if not dbt_config.api_token or dbt_config.api_token == "YOUR_DBT_CLOUD_API_TOKEN":
         raise Exception("DBT Cloud API token is missing or default. Please update your config.yaml.")
-    if not config.account_id or config.account_id == "YOUR_DBT_CLOUD_ACCOUNT_ID":
+    if not dbt_config.account_id or dbt_config.account_id == "YOUR_DBT_CLOUD_ACCOUNT_ID":
         raise Exception("DBT Cloud Account ID is missing or default. Please update your config.yaml.")
-    if not config.job_id or config.job_id == "YOUR_DBT_CLOUD_JOB_ID":
+    if not dbt_config.job_id or dbt_config.job_id == "YOUR_DBT_CLOUD_JOB_ID":
         raise Exception("DBT Cloud Job ID is missing or default. Please update your config.yaml.")
     
     # Use the correct URL format for your DBT Cloud instance
-    url = f"https://xn636.us1.dbt.com/api/v2/accounts/{config.account_id}/jobs/{config.job_id}/run"
+    url = f"https://xn636.us1.dbt.com/api/v2/accounts/{dbt_config.account_id}/jobs/{dbt_config.job_id}/run"
     context.log.info(f"Using DBT Cloud API URL: {url}")
     
     payload = {"cause": f"Triggered from Dagster run {context.run_id}"}
-    headers = {"Authorization": f"Token {config.api_token}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Token {dbt_config.api_token}", "Content-Type": "application/json"}
     
     try:
         # Execute the API call
-        context.log.info(f"Triggering DBT Cloud job with job_id: {config.job_id}")
+        context.log.info(f"Triggering DBT Cloud job with job_id: {dbt_config.job_id}")
         resp = requests.post(url, json=payload, headers=headers)
         
         # Log response status and content for debugging
@@ -112,166 +126,29 @@ def trigger_dbt_cloud_job(context: OpExecutionContext):
         context.log.error(f"Error triggering DBT Cloud job: {e}")
         raise
 
-# This op is not used in the graph, but kept for completeness if you decide to use it.
-@op(ins={"run_id": In(int)}, out=Out(Dict), required_resource_keys={"dbt_config"})
-def get_dbt_job_status(context: OpExecutionContext, run_id: int) -> Dict:
-    """Poll DBT Cloud job status until completion or timeout"""
-    config = context.resources.dbt_config
-    max_retries = 30  # Maximum number of status check attempts
-    retry_interval = 20  # Seconds between status checks
-    
-    url = f"https://xn636.us1.dbt.com/api/v2/accounts/{config.account_id}/runs/{run_id}/"
-    headers = {"Authorization": f"Token {config.api_token}", "Content-Type": "application/json"}
-    
-    for attempt in range(max_retries):
-        try:
-            context.log.info(f"Checking job status (attempt {attempt + 1}/{max_retries})...")
-            resp = requests.get(url, headers=headers)
-            resp.raise_for_status()
-            status_data = resp.json()["data"]
-            
-            # --- FIX: Use 'status_humanized' for string comparison ---
-            status = status_data.get("status_humanized", "unknown").lower()
-            
-            if status in ["success", "failed", "cancelled", "error"]:
-                context.log.info(f"Job completed with status: {status}")
-                return {
-                    "status": status,
-                    "run_id": run_id,
-                    "finished_at": status_data.get("finished_at"),
-                    "status_message": status_data.get("status_message"),
-                    "job_name": status_data.get("job_name"),
-                    "environment": status_data.get("environment"),
-                    "error_details": status_data.get("status_message")
-                }
-            
-            context.log.info(f"Current status: {status}, waiting {retry_interval} seconds...")
-            time.sleep(retry_interval)
-            
-        except Exception as e:
-            context.log.error(f"Error checking job status: {e}")
-            if attempt == max_retries - 1:
-                raise
-            time.sleep(retry_interval)
-    
-    raise Exception(f"Job status check timed out after {max_retries * retry_interval} seconds")
-
-def get_dbt_run_logs(context: OpExecutionContext, account_id: str, run_id: int, api_token: str) -> str:
-    """Fetch the logs from a DBT Cloud run"""
-    artifacts_url = f"https://xn636.us1.dbt.com/api/v2/accounts/{account_id}/runs/{run_id}/artifacts/"
-    run_url = f"https://xn636.us1.dbt.com/api/v2/accounts/{account_id}/runs/{run_id}/"
-    headers = {"Authorization": f"Token {api_token}", "Content-Type": "application/json"}
-    
-    try:
-        # First, get the run details to check for immediate errors
-        run_resp = requests.get(run_url, headers=headers)
-        run_resp.raise_for_status()
-        run_data = run_resp.json().get("data", {})
-        
-        # Get raw logs from the run details
-        raw_logs = run_data.get("logs", "")
-        if raw_logs:
-            context.log.info("Found raw logs in run details")
-        
-        full_logs = []
-        if raw_logs:
-            full_logs.append("=== DBT Execution Logs ===")
-            full_logs.append(raw_logs)
-            full_logs.append("\n")
-            
-        # Get list of artifacts
-        artifacts_resp = requests.get(artifacts_url, headers=headers)
-        artifacts_resp.raise_for_status()
-        artifacts = artifacts_resp.json().get("data", [])
-        
-        # Look for specific log files
-        for artifact in artifacts:
-            artifact_path = artifact.get("path", "")
-            if any(log_type in artifact_path.lower() for log_type in ["logs.txt", "run_results.json", "manifest.json", "compiled"]):
-                # Get the content of each artifact
-                artifact_url = f"{artifacts_url}{artifact_path}"
-                artifact_resp = requests.get(artifact_url, headers=headers)
-                if artifact_resp.status_code == 200:
-                    try:
-                        if artifact_path.endswith('.json'):
-                            content = artifact_resp.json()
-                            if "results" in content:  # run_results.json
-                                results = content.get("results", [])
-                                
-                                failed_results = [r for r in results if r.get("status") != "success"]
-                                
-                                if failed_results:
-                                    full_logs.append("\n=== Failed Model Details ===")
-                                    for result in failed_results:
-                                        full_logs.append(f"\nModel: {result.get('unique_id')}")
-                                        full_logs.append(f"Status: {result.get('status')}")
-                                        
-                                        # Extract detailed error information
-                                        if "message" in result:
-                                            full_logs.append(f"Error Message: {result.get('message')}")
-                                        if "compiled_sql" in result:
-                                            full_logs.append("\nCompiled SQL:")
-                                            full_logs.append(result.get('compiled_sql'))
-                        
-                        elif "compiled" in artifact_path.lower() and artifact_path.endswith('.sql'):
-                            # This is a compiled SQL file that might have caused an error
-                            full_logs.append(f"\n=== Compiled SQL for {artifact_path} ===")
-                            full_logs.append(artifact_resp.text)
-                            
-                        elif artifact_path.endswith('logs.txt'):
-                            # Process the main log file
-                            log_content = artifact_resp.text
-                            full_logs.append("\n=== DBT Execution Log ===")
-                            full_logs.append(log_content)
-                            
-                            # Look for specific error patterns in the logs
-                            error_lines = [line for line in log_content.split('\n') 
-                                           if any(error_term in line.lower() 
-                                                  for error_term in ['error', 'failed', 'compilation error', 'invalid'])]
-                            if error_lines:
-                                full_logs.append("\n=== Extracted Error Messages ===")
-                                full_logs.extend(error_lines)
-                            
-                    except Exception as e:
-                        context.log.warning(f"Error processing artifact {artifact_path}: {str(e)}")
-                        if artifact_path.endswith('.txt'):
-                            full_logs.append(artifact_resp.text)
-        
-        log_content = "\n".join(full_logs)
-        
-        # If we have no logs but have an error message in the run data, use that
-        if not log_content.strip() and run_data.get("status_message"):
-            log_content = f"DBT Error Message: {run_data.get('status_message')}"
-        
-        return log_content if log_content.strip() else "No logs available"
-    except Exception as e:
-        context.log.error(f"Error fetching DBT run logs: {str(e)}")
-        return f"Error fetching logs: {str(e)}"
-
-@op(ins={"dbt_run_id": In(int)}, out=Out(Dict), required_resource_keys={"dbt_config"})
-def monitor_dbt_job(context: OpExecutionContext, dbt_run_id: int) -> Dict:
+@op(ins={"dbt_run_id": In(int)}, out=Out(Dict))
+def monitor_dbt_job(context: OpExecutionContext, dbt_run_id: int, dbt_config: DBTCloudResource) -> Dict:
     """Monitor DBT job execution and return final status"""
-    if context.resources.dbt_config.skip_dbt:
+    if dbt_config.skip_dbt:
         return {"status": "skipped", "run_id": dbt_run_id}
     
-    config = context.resources.dbt_config
     initial_delay = 60  # 1 minute initial delay
     check_interval = 10  # 10 seconds between status checks
     max_duration = 1800  # 30 minutes maximum total duration
     
-    url = f"https://xn636.us1.dbt.com/api/v2/accounts/{config.account_id}/runs/{dbt_run_id}/"
-    headers = {"Authorization": f"Token {config.api_token}", "Content-Type": "application/json"}
+    url = f"https://xn636.us1.dbt.com/api/v2/accounts/{dbt_config.account_id}/runs/{dbt_run_id}/"
+    headers = {"Authorization": f"Token {dbt_config.api_token}", "Content-Type": "application/json"}
     
     # Print monitoring start message with clear formatting
     print("\n" + "="*50)
     print("Starting DBT Job Monitoring")
     print("="*50)
     print(f"Run ID: {dbt_run_id}")
-    print(f"Account ID: {config.account_id}")
-    print(f"Job ID: {config.job_id}")
+    print(f"Account ID: {dbt_config.account_id}")
+    print(f"Job ID: {dbt_config.job_id}")
     print(f"Initial delay: {initial_delay} seconds")
     print(f"Check interval: {check_interval} seconds")
-    print(f"DBT Cloud URL: https://xn636.us1.dbt.com/deploy/{config.account_id}/pipeline/runs/{dbt_run_id}")
+    print(f"DBT Cloud URL: https://xn636.us1.dbt.com/deploy/{dbt_config.account_id}/pipeline/runs/{dbt_run_id}")
     print("="*50 + "\n")
     
     # Initial delay to allow job to start
@@ -355,7 +232,7 @@ def monitor_dbt_job(context: OpExecutionContext, dbt_run_id: int) -> Dict:
                         
                     # Get detailed run information
                     try:
-                        run_details_url = f"https://xn636.us1.dbt.com/api/v2/accounts/{config.account_id}/runs/{dbt_run_id}/"
+                        run_details_url = f"https://xn636.us1.dbt.com/api/v2/accounts/{dbt_config.account_id}/runs/{dbt_run_id}/"
                         run_details_resp = requests.get(run_details_url, headers=headers)
                         if run_details_resp.status_code == 200:
                             run_details = run_details_resp.json().get("data", {})
@@ -399,7 +276,7 @@ def monitor_dbt_job(context: OpExecutionContext, dbt_run_id: int) -> Dict:
                         print("\n=== DBT Cloud Error Details ===")
                         print("\n".join(error_details))
                         print("\nView full logs at:")
-                        print(f"https://xn636.us1.dbt.com/deploy/{config.account_id}/pipeline/runs/{dbt_run_id}")
+                        print(f"https://xn636.us1.dbt.com/deploy/{dbt_config.account_id}/pipeline/runs/{dbt_run_id}")
                     
                 print("="*50 + "\n")
                 
@@ -412,24 +289,10 @@ def monitor_dbt_job(context: OpExecutionContext, dbt_run_id: int) -> Dict:
                     "error_details": "\n".join(error_details) if not is_success else "",
                     "status_message": error_message,
                     "dbt_logs": current_logs,
-                    "run_url": f"https://xn636.us1.dbt.com/deploy/{config.account_id}/pipeline/runs/{dbt_run_id}",
+                    "run_url": f"https://xn636.us1.dbt.com/deploy/{dbt_config.account_id}/pipeline/runs/{dbt_run_id}",
                     "is_success": is_success
                 }
                 
-                # Prepare the result with all information
-                result = {
-                    "status": current_status,
-                    "run_id": dbt_run_id,
-                    "finished_at": data.get("finished_at"),
-                    "job_name": data.get("job_name"),
-                    "environment": data.get("environment"),
-                    "error_details": "\n".join(error_details) if not is_success else "",
-                    "status_message": error_message,
-                    "dbt_logs": current_logs,
-                    "run_url": f"https://xn636.us1.dbt.com/deploy/{config.account_id}/pipeline/runs/{dbt_run_id}",
-                    "is_success": is_success
-                }
-
                 # If job failed, add error details to the result
                 if not is_success:
                     print("\n=== Detailed Error Information ===")
@@ -458,12 +321,13 @@ def monitor_dbt_job(context: OpExecutionContext, dbt_run_id: int) -> Dict:
     print_timestamp_message(timeout_msg, error=True)
     raise Exception(timeout_msg)
 
-@op(ins={"job_status": In(Dict)}, out=Out(str), required_resource_keys={"email_config", "dbt_config"})
-def prepare_email_message(context: OpExecutionContext, job_status: Dict):
-    """Prepare the email message content with DBT job details or custom message"""
-    email_config = context.resources.email_config
-    dbt_config = context.resources.dbt_config
+@op(ins={"job_status": In(Dict)}, out=Out(str))
+def send_email_notification(context: OpExecutionContext, job_status: Dict, email_config: EmailResource, dbt_config: DBTCloudResource):
+    """Send email notification with job status details"""
+    max_retries = 3
+    retry_delay = 5  # seconds
     
+    # Prepare email message
     if dbt_config.skip_dbt:
         message_text = email_config.message
         context.log.info("Using custom email message (DBT skipped)")
@@ -535,97 +399,36 @@ def prepare_email_message(context: OpExecutionContext, job_status: Dict):
         message_text += "\n\nThis is an automated notification from Dagster."
         context.log.info(f"Generated DBT job notification for status: {status}")
     
-    context.log.info(f"Email subject: {email_config.subject}")
-    return message_text
-
-@op(ins={"job_status": In(Dict)}, out=Out(str), required_resource_keys={"email_config"})
-def send_email_notification(context: OpExecutionContext, job_status: Dict):
-    """Send email notification with job status details"""
-    config = context.resources.email_config
-    max_retries = 3
-    retry_delay = 5  # seconds
-    
     # Create email service instance
     email_service = EmailService(
-        sender_email=config.sender_email,
-        password=config.password,
-        smtp_server=config.smtp_server,
-        smtp_port=config.smtp_port
+        sender_email=email_config.sender_email,
+        password=email_config.password,
+        smtp_server=email_config.smtp_server,
+        smtp_port=email_config.smtp_port
     )
     
-    context.log.info(f"Sending job status email to {config.recipient_email}")
+    context.log.info(f"Sending job status email to {email_config.recipient_email}")
     
     try:
         # Send email with job status
         email_service.send_email(
-            recipient_email=config.recipient_email,
-            subject=config.subject,
-            message=config.message,
+            recipient_email=email_config.recipient_email,
+            subject=email_config.subject,
+            message=message_text,
             job_result=job_status
         )
-        return f"Email notification sent successfully to {config.recipient_email}"
+        return f"Email notification sent successfully to {email_config.recipient_email}"
     except Exception as e:
         error_msg = f"Failed to send email notification: {str(e)}"
         context.log.error(error_msg)
         raise Exception(error_msg)
-
-def test_email_config(email_config_instance):
-    """Test email configuration by sending a test email"""
-    print("\nTesting email configuration...")
-    try:
-        # Create SMTP connection
-        with smtplib.SMTP(email_config_instance.smtp_server, email_config_instance.smtp_port, timeout=30) as server:
-            server.set_debuglevel(1)  # Enable debug output
-            print(f"Connected to SMTP server: {email_config_instance.smtp_server}:{email_config_instance.smtp_port}")
-            
-            # Initial EHLO
-            server.ehlo()
-            
-            # Start TLS
-            if not server.has_extn('starttls'):
-                raise Exception("STARTTLS not supported by server")
-            
-            server.starttls()
-            print("TLS connection established")
-            
-            # EHLO again after TLS
-            server.ehlo()
-            
-            # Attempt login
-            try:
-                server.login(email_config_instance.sender_email, email_config_instance.password)
-                print("Successfully logged in to SMTP server")
-            except smtplib.SMTPAuthenticationError as auth_err:
-                print(f"\n❌ Authentication failed. Error code: {auth_err.smtp_code}")
-                print(f"Error message: {auth_err.smtp_error.decode() if hasattr(auth_err.smtp_error, 'decode') else auth_err.smtp_error}")
-                raise
-            
-            # Create test message
-            msg = EmailMessage()
-            msg.set_content("This is a test email from Dagster")
-            msg["Subject"] = "Dagster Email Test"
-            msg["From"] = email_config_instance.sender_email
-            msg["To"] = email_config_instance.recipient_email
-            
-            # Send test email
-            server.send_message(msg)
-            print("\n✅ Test email sent successfully!")
-            return True
-            
-    except smtplib.SMTPAuthenticationError as auth_err:
-        print(f"\n❌ Authentication failed: {str(auth_err)}")
-        print("Please check your email credentials (sender email and password)")
-        return False
-    except Exception as e:
-        print(f"\n❌ Email test failed: {str(e)}")
-        return False
 
 @graph
 def dbt_with_email_notification():
     """Graph that combines DBT job triggering with email notification"""
     run_id = trigger_dbt_cloud_job()
     job_status = monitor_dbt_job(run_id)
-    send_email_notification(job_status)  # Send email with job status directly
+    send_email_notification(job_status)
 
 # The job now uses the graph and specifies the required resources
 @job
@@ -679,6 +482,51 @@ def load_or_create_config():
     
     return config
 
+# Create the Definitions object that Dagster will use
+def create_definitions():
+    """Create Dagster definitions with proper resource configuration"""
+    # Load configuration
+    config_data = load_or_create_config()
+    if config_data is None:
+        # Return empty definitions if config needs to be updated
+        return Definitions(
+            jobs=[],
+            resources={}
+        )
+    
+    # Get configurations from file
+    dbt_config_dict = config_data.get("dbt_config", {})
+    email_config_dict = config_data.get("email_config", {})
+    
+    # Create resource instances
+    dbt_resource = DBTCloudResource(
+        api_token=dbt_config_dict.get("api_token", ""),
+        account_id=dbt_config_dict.get("account_id", ""),
+        job_id=dbt_config_dict.get("job_id", ""),
+        skip_dbt=dbt_config_dict.get("skip_dbt", False)
+    )
+    
+    email_resource = EmailResource(
+        sender_email=email_config_dict.get("sender_email", ""),
+        password=email_config_dict.get("password", ""),
+        recipient_email=email_config_dict.get("recipient_email", ""),
+        subject=email_config_dict.get("subject", "Dagster Notification"),
+        message=email_config_dict.get("message", "This is a notification from Dagster."),
+        smtp_server=email_config_dict.get("smtp_server", "smtp.office365.com"),
+        smtp_port=email_config_dict.get("smtp_port", 587)
+    )
+    
+    return Definitions(
+        jobs=[dbt_notification_job],
+        resources={
+            "dbt_config": dbt_resource,
+            "email_config": email_resource
+        }
+    )
+
+# Create the definitions for Dagster to discover
+defs = create_definitions()
+
 if __name__ == "__main__":
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Run a Dagster job that triggers a DBT Cloud job and sends an email notification")
@@ -703,15 +551,15 @@ if __name__ == "__main__":
         dbt_config_dict["skip_dbt"] = True
         print("DBT Cloud job execution will be skipped (email-only mode).")
     
-    # Create config objects
-    dbt_config_instance = DBTConfig(
+    # Create resource instances
+    dbt_resource = DBTCloudResource(
         api_token=dbt_config_dict.get("api_token"),
         account_id=dbt_config_dict.get("account_id"),
         job_id=dbt_config_dict.get("job_id"),
         skip_dbt=dbt_config_dict.get("skip_dbt", False)
     )
     
-    email_config_instance = EmailConfig(
+    email_resource = EmailResource(
         sender_email=email_config_dict.get("sender_email"),
         password=email_config_dict.get("password"),
         recipient_email=email_config_dict.get("recipient_email"),
@@ -722,35 +570,35 @@ if __name__ == "__main__":
     )
     
     # Show execution mode
-    if dbt_config_instance.skip_dbt:
+    if dbt_resource.skip_dbt:
         print("Running in email-only mode (skipping DBT Cloud job)...")
     else:
         # Check if DBT configurations have default values
-        if dbt_config_instance.api_token == "YOUR_DBT_CLOUD_API_TOKEN":
+        if dbt_resource.api_token == "YOUR_DBT_CLOUD_API_TOKEN":
             print("Warning: Default DBT Cloud API token detected.")
             print("Please update the configuration file with your actual DBT Cloud credentials.")
             sys.exit(1)
     
     # Check email credentials
-    if email_config_instance.password == "YOUR_APP_PASSWORD":
+    if email_resource.password == "YOUR_APP_PASSWORD":
         print("Warning: Default email password detected.")
         print("Please update the configuration file with your actual email credentials.")
         sys.exit(1)
     
-    # Define resource overrides with our config instances
-    resource_overrides = {
-        "dbt_config": ResourceDefinition.hardcoded_resource(dbt_config_instance),
-        "email_config": ResourceDefinition.hardcoded_resource(email_config_instance)
-    }
+    # Create a temporary definitions object for direct execution
+    temp_defs = Definitions(
+        jobs=[dbt_notification_job],
+        resources={
+            "dbt_config": dbt_resource,
+            "email_config": email_resource
+        }
+    )
     
     print("\nStarting job execution...")
     
     try:
         # Execute the job with our resource configuration
-        result = dbt_notification_job.execute_in_process(
-            run_config={},
-            resources=resource_overrides
-        )
+        result = temp_defs.get_job_def("dbt_notification_job").execute_in_process()
         if result.success:
             print("\n✅ Job completed successfully!")
         else:
@@ -761,4 +609,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n❌ Error running job: {str(e)}")
         sys.exit(1)
-
