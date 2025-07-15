@@ -1,7 +1,6 @@
-# my_dagster_project/glue_endpoint_job.py
+# my_dagster_project/dbt_cloud_job.py
 import os
 import sys
-import yaml # Used for loading config.yaml in __main__ block
 import requests
 import argparse
 import smtplib
@@ -10,6 +9,7 @@ import re # For regex in monitor_dbt_job
 from email.message import EmailMessage
 from datetime import datetime
 from typing import Dict, Optional, List
+from dotenv import load_dotenv
 
 from dagster import (
     op,
@@ -25,6 +25,9 @@ from dagster import (
     ConfigurableResource,
     Definitions
 )
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Add the project root to the Python path to resolve sibling imports like 'resources'
 # This is crucial when running with `dagster dev` or `execute_in_process`
@@ -46,27 +49,10 @@ class EmailResource(ConfigurableResource):
     sender_email: str
     password: str
     recipient_email: str
-    subject: str = "Dagster Notification"
-    message: str = "This is a test notification from Dagster!"
-    smtp_server: str = "smtp.office365.com"
-    smtp_port: int = 587
-
-# Email configuration class using dagster Config
-class EmailConfig(Config):
-    sender_email: str = "ateeqh.rehman@dynpro.com"
-    password: str = "Habeeb@123"  # Use an app password, not your main password
-    recipient_email: str = "sharwari.shinde@dynpro.com"
-    subject: str = "Dagster Notification"
-    message: str = "This is a test notification from Dagster! Sent on July 14, 2025."
-    smtp_server: str = "smtp.office365.com"
-    smtp_port: int = 587
-
-# DBT Cloud configuration (defaults to environment variables if available)
-class DBTConfig(Config):
-    api_token: str = os.getenv("DBT_CLOUD_API_TOKEN", "YOUR_DBT_CLOUD_API_TOKEN")
-    account_id: str = os.getenv("DBT_CLOUD_ACCOUNT_ID", "YOUR_DBT_CLOUD_ACCOUNT_ID")
-    job_id: str = os.getenv("DBT_CLOUD_JOB_ID", "YOUR_DBT_CLOUD_JOB_ID")
-    skip_dbt: bool = False  # Set to True to skip DBT Cloud job execution
+    subject: str
+    message: str
+    smtp_server: str
+    smtp_port: int
 
 @op(out=Out(int))
 def trigger_dbt_cloud_job(context: OpExecutionContext, dbt_config: DBTCloudResource):
@@ -84,12 +70,12 @@ def trigger_dbt_cloud_job(context: OpExecutionContext, dbt_config: DBTCloudResou
         return mock_run_id
     
     # Validate credentials before making API call
-    if not dbt_config.api_token or dbt_config.api_token == "YOUR_DBT_CLOUD_API_TOKEN":
-        raise Exception("DBT Cloud API token is missing or default. Please update your config.yaml.")
-    if not dbt_config.account_id or dbt_config.account_id == "YOUR_DBT_CLOUD_ACCOUNT_ID":
-        raise Exception("DBT Cloud Account ID is missing or default. Please update your config.yaml.")
-    if not dbt_config.job_id or dbt_config.job_id == "YOUR_DBT_CLOUD_JOB_ID":
-        raise Exception("DBT Cloud Job ID is missing or default. Please update your config.yaml.")
+    if not dbt_config.api_token:
+        raise Exception("DBT Cloud API token is missing. Please check your .env file.")
+    if not dbt_config.account_id:
+        raise Exception("DBT Cloud Account ID is missing. Please check your .env file.")
+    if not dbt_config.job_id:
+        raise Exception("DBT Cloud Job ID is missing. Please check your .env file.")
     
     # Use the correct URL format for your DBT Cloud instance
     url = f"https://xn636.us1.dbt.com/api/v2/accounts/{dbt_config.account_id}/jobs/{dbt_config.job_id}/run"
@@ -230,7 +216,8 @@ def monitor_dbt_job(context: OpExecutionContext, dbt_run_id: int, dbt_config: DB
                     if "error" in data:
                         error_details.append(f"Error: {data['error']}")
                         
-                    # Get detailed run information
+                    # Get detailed run information and project_id
+                    project_id = None
                     try:
                         run_details_url = f"https://xn636.us1.dbt.com/api/v2/accounts/{dbt_config.account_id}/runs/{dbt_run_id}/"
                         run_details_resp = requests.get(run_details_url, headers=headers)
@@ -240,6 +227,8 @@ def monitor_dbt_job(context: OpExecutionContext, dbt_run_id: int, dbt_config: DB
                                 error_details.append(f"Status Details: {run_details['status_humanized']}")
                             if "status_message" in run_details:
                                 error_details.append(f"Status Message: {run_details['status_message']}")
+                            # Extract project_id from run_details
+                            project_id = run_details.get("project_id")
                     except Exception as e:
                         error_details.append(f"Failed to fetch detailed status: {str(e)}")
                     
@@ -276,7 +265,10 @@ def monitor_dbt_job(context: OpExecutionContext, dbt_run_id: int, dbt_config: DB
                         print("\n=== DBT Cloud Error Details ===")
                         print("\n".join(error_details))
                         print("\nView full logs at:")
-                        print(f"https://xn636.us1.dbt.com/deploy/{dbt_config.account_id}/pipeline/runs/{dbt_run_id}")
+                        if project_id:
+                            print(f"https://xn636.us1.dbt.com/deploy/{dbt_config.account_id}/projects/{project_id}/runs/{dbt_run_id}")
+                        else:
+                            print(f"https://xn636.us1.dbt.com/deploy/{dbt_config.account_id}/pipeline/runs/{dbt_run_id}")
                     
                 print("="*50 + "\n")
                 
@@ -284,12 +276,12 @@ def monitor_dbt_job(context: OpExecutionContext, dbt_run_id: int, dbt_config: DB
                     "status": current_status,
                     "run_id": dbt_run_id,
                     "finished_at": data.get("finished_at"),
-                    "job_name": data.get("job_name"),
-                    "environment": data.get("environment"),
+                    "job_id": data.get("job_id"),
+                    "git_branch": data.get("git_branch"),
                     "error_details": "\n".join(error_details) if not is_success else "",
                     "status_message": error_message,
                     "dbt_logs": current_logs,
-                    "run_url": f"https://xn636.us1.dbt.com/deploy/{dbt_config.account_id}/pipeline/runs/{dbt_run_id}",
+                    "run_url": f"https://xn636.us1.dbt.com/deploy/{dbt_config.account_id}/projects/{project_id}/runs/{dbt_run_id}" if project_id else f"https://xn636.us1.dbt.com/deploy/{dbt_config.account_id}/pipeline/runs/{dbt_run_id}",
                     "is_success": is_success
                 }
                 
@@ -367,20 +359,19 @@ def send_email_notification(context: OpExecutionContext, job_status: Dict, email
         
         message_text = f"""
         DBT Cloud Job Run Notification {status_emoji}
-        
+
         Job Status: {status.upper()}
         Status Message: {job_status.get('status_message', 'No status message')}
         Run ID: {job_status.get('run_id')}
-        Job Name: {job_status.get('job_name')}
-        Environment: {job_status.get('environment')}
+        JOB_ID: {job_status.get('job_id', dbt_config.job_id)}
+        GIT_BRANCH: {job_status.get('git_branch', 'N/A')}
         Account ID: {dbt_config.account_id}
-        Job ID: {dbt_config.job_id}
-        
+
         Finished At: {job_status.get('finished_at')}
         Current Time: {current_time}
-        
+
         View in DBT Cloud: {job_status.get('run_url')}
-        
+
         === Execution Details ===
         {job_status.get('error_details', 'No execution details available')}
         """
@@ -436,84 +427,79 @@ def dbt_notification_job():
     """Job that triggers a DBT Cloud job and sends email notification"""
     dbt_with_email_notification()
 
-def load_or_create_config():
-    """Load configuration from YAML file or create default"""
-    # This path is relative to where the script is run from (the project root)
-    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config.yaml")
-    config = {}
+def load_env_config():
+    """Load configuration from environment variables"""
     
-    # Try to load existing config
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, "r") as f:
-                config = yaml.safe_load(f)
-            print(f"Configuration loaded from {config_path}")
-        except Exception as e:
-            print(f"Error loading configuration: {e}")
-    else:
-        # Create default config if file doesn't exist
-        config = {
-            "dbt_config": {
-                "api_token": "dbtu_eSYPMSIP9HgMU6DfDOs2kz-grNCJvDgIw0VB_ZZFn2bpxbd2ng", # Replace with your actual token
-                "account_id": "70471823461483", # Replace with your actual account ID
-                "job_id": "70471823472253",     # Replace with your actual job ID
-                "skip_dbt": False
-            },
-            "email_config": {
-                "sender_email": "devender.dagar@dynpro.com",
-                "password": "Buntydev@34",  # Use an app password, not your main password
-                "recipient_email": "sharwari.shinde@dynpro.com",
-                "subject": "Dagster Notification",
-                "message": "This is a test notification from Dagster! Sent on July 14, 2025.",
-                "smtp_server": "smtp.office365.com",
-                "smtp_port": 587
-            }
+    # Check for required environment variables
+    required_vars = [
+        "DBT_CLOUD_API_TOKEN",
+        "DBT_CLOUD_ACCOUNT_ID", 
+        "DBT_CLOUD_JOB_ID",
+        "EMAIL_SENDER",
+        "EMAIL_PASSWORD",
+        "EMAIL_RECIPIENT"
+    ]
+    
+    missing_vars = []
+    for var in required_vars:
+        if not os.getenv(var):
+            missing_vars.append(var)
+    
+    if missing_vars:
+        print(f"Error: Missing required environment variables: {', '.join(missing_vars)}")
+        print("Please check your .env file or set these environment variables.")
+        return None
+    
+    return {
+        "dbt_config": {
+            "api_token": os.getenv("DBT_CLOUD_API_TOKEN"),
+            "account_id": os.getenv("DBT_CLOUD_ACCOUNT_ID"),
+            "job_id": os.getenv("DBT_CLOUD_JOB_ID"),
+            "skip_dbt": os.getenv("SKIP_DBT", "false").lower() == "true"
+        },
+        "email_config": {
+            "sender_email": os.getenv("EMAIL_SENDER"),
+            "password": os.getenv("EMAIL_PASSWORD"),
+            "recipient_email": os.getenv("EMAIL_RECIPIENT"),
+            "subject": os.getenv("EMAIL_SUBJECT", "Dagster DBT Job Notification"),
+            "message": os.getenv("EMAIL_MESSAGE", "This is an automated notification from Dagster."),
+            "smtp_server": os.getenv("SMTP_SERVER", "smtp.office365.com"),
+            "smtp_port": int(os.getenv("SMTP_PORT", "587"))
         }
-        
-        # Write default config to file
-        try:
-            with open(config_path, "w") as f:
-                yaml.dump(config, f, default_flow_style=False)
-            print(f"Default configuration created at {config_path}")
-            print("Please update the configuration with your actual values before running again.")
-            return None # Indicate that user needs to update config
-        except Exception as e:
-            print(f"Error creating default configuration: {e}")
-    
-    return config
+    }
 
 # Create the Definitions object that Dagster will use
 def create_definitions():
     """Create Dagster definitions with proper resource configuration"""
-    # Load configuration
-    config_data = load_or_create_config()
+    # Load configuration from environment
+    config_data = load_env_config()
     if config_data is None:
-        # Return empty definitions if config needs to be updated
+        # Return empty definitions if config is missing
         return Definitions(
             jobs=[],
             resources={}
         )
     
-    # Get configurations from file
+    # Get configurations from environment
     dbt_config_dict = config_data.get("dbt_config", {})
     email_config_dict = config_data.get("email_config", {})
     
     # Create resource instances
     dbt_resource = DBTCloudResource(
-        api_token=dbt_config_dict.get("api_token", ""),
-        account_id=dbt_config_dict.get("account_id", ""),
-        job_id=dbt_config_dict.get("job_id", ""),
-        skip_dbt=dbt_config_dict.get("skip_dbt", False)
+        api_token=dbt_config_dict["api_token"],
+        account_id=dbt_config_dict["account_id"],
+        job_id=dbt_config_dict["job_id"],
+        skip_dbt=dbt_config_dict["skip_dbt"]
     )
     
     email_resource = EmailResource(
-        sender_email=email_config_dict.get("sender_email", ""),
-        password=email_config_dict.get("password", ""),
-        recipient_email=email_config_dict.get("recipient_email", ""),
-        subject=email_config_dict.get("subject", "Dagster Notification"),
-        message=email_config_dict.get("message", "This is a notification from Dagster."),
-        smtp_server=email_config_dict.get("smtp_server", "smtp.office365.com"),
-        smtp_port=email_config_dict.get("smtp_port", 587)
+        sender_email=email_config_dict["sender_email"],
+        password=email_config_dict["password"],
+        recipient_email=email_config_dict["recipient_email"],
+        subject=email_config_dict["subject"],
+        message=email_config_dict["message"],
+        smtp_server=email_config_dict["smtp_server"],
+        smtp_port=email_config_dict["smtp_port"]
     )
     
     return Definitions(
@@ -534,15 +520,15 @@ if __name__ == "__main__":
     parser.add_argument("--email-only", action="store_true", help="Same as --skip-dbt, for easier understanding")
     args = parser.parse_args()
 
-    # Load or create configuration
-    config_data = load_or_create_config()
+    # Load configuration from environment
+    config_data = load_env_config()
     
-    # If default config was just created, exit early
+    # If configuration is missing, exit early
     if config_data is None:
-        print("Exiting - please update the configuration file with your credentials first.")
-        sys.exit(0)
+        print("Exiting - please check your .env file or environment variables.")
+        sys.exit(1)
     
-    # Get configurations from file
+    # Get configurations from environment
     dbt_config_dict = config_data.get("dbt_config", {})
     email_config_dict = config_data.get("email_config", {})
     
@@ -553,37 +539,27 @@ if __name__ == "__main__":
     
     # Create resource instances
     dbt_resource = DBTCloudResource(
-        api_token=dbt_config_dict.get("api_token"),
-        account_id=dbt_config_dict.get("account_id"),
-        job_id=dbt_config_dict.get("job_id"),
-        skip_dbt=dbt_config_dict.get("skip_dbt", False)
+        api_token=dbt_config_dict["api_token"],
+        account_id=dbt_config_dict["account_id"],
+        job_id=dbt_config_dict["job_id"],
+        skip_dbt=dbt_config_dict["skip_dbt"]
     )
     
     email_resource = EmailResource(
-        sender_email=email_config_dict.get("sender_email"),
-        password=email_config_dict.get("password"),
-        recipient_email=email_config_dict.get("recipient_email"),
-        subject=email_config_dict.get("subject"),
-        message=email_config_dict.get("message", "This is a notification from Dagster."),
-        smtp_server=email_config_dict.get("smtp_server"),
-        smtp_port=email_config_dict.get("smtp_port")
+        sender_email=email_config_dict["sender_email"],
+        password=email_config_dict["password"],
+        recipient_email=email_config_dict["recipient_email"],
+        subject=email_config_dict["subject"],
+        message=email_config_dict["message"],
+        smtp_server=email_config_dict["smtp_server"],
+        smtp_port=email_config_dict["smtp_port"]
     )
     
     # Show execution mode
     if dbt_resource.skip_dbt:
         print("Running in email-only mode (skipping DBT Cloud job)...")
     else:
-        # Check if DBT configurations have default values
-        if dbt_resource.api_token == "YOUR_DBT_CLOUD_API_TOKEN":
-            print("Warning: Default DBT Cloud API token detected.")
-            print("Please update the configuration file with your actual DBT Cloud credentials.")
-            sys.exit(1)
-    
-    # Check email credentials
-    if email_resource.password == "YOUR_APP_PASSWORD":
-        print("Warning: Default email password detected.")
-        print("Please update the configuration file with your actual email credentials.")
-        sys.exit(1)
+        print("Running with DBT Cloud job execution...")
     
     # Create a temporary definitions object for direct execution
     temp_defs = Definitions(
