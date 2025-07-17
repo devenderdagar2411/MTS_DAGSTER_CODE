@@ -51,10 +51,7 @@ class EmailService:
                         <td style="padding: 8px; border-bottom: 1px solid #dee2e6;"><strong>Finished At:</strong></td>
                         <td style="padding: 8px; border-bottom: 1px solid #dee2e6;">{finished_at}</td>
                     </tr>
-                    <tr>
-                        <td style="padding: 8px; border-bottom: 1px solid #dee2e6;"><strong>Current Time:</strong></td>
-                        <td style="padding: 8px; border-bottom: 1px solid #dee2e6;">{current_time}</td>
-                    </tr>
+                   
                 </table>
             </div>
         """

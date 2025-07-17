@@ -117,14 +117,17 @@ def monitor_dbt_job(context: OpExecutionContext, dbt_run_id: int, dbt_config: DB
     """Monitor DBT job execution and return final status"""
     if dbt_config.skip_dbt:
         return {"status": "skipped", "run_id": dbt_run_id}
-    
+
+    # Always initialize project_id from environment at the start
+    project_id = os.getenv("DBT_CLOUD_PROJECT_ID", "70471823469423")
+
     initial_delay = 60  # 1 minute initial delay
     check_interval = 10  # 10 seconds between status checks
     max_duration = 1800  # 30 minutes maximum total duration
-    
+
     url = f"https://xn636.us1.dbt.com/api/v2/accounts/{dbt_config.account_id}/runs/{dbt_run_id}/"
     headers = {"Authorization": f"Token {dbt_config.api_token}", "Content-Type": "application/json"}
-    
+
     # Print monitoring start message with clear formatting
     print("\n" + "="*50)
     print("Starting DBT Job Monitoring")
@@ -136,22 +139,22 @@ def monitor_dbt_job(context: OpExecutionContext, dbt_run_id: int, dbt_config: DB
     print(f"Check interval: {check_interval} seconds")
     print(f"DBT Cloud URL: https://xn636.us1.dbt.com/deploy/{dbt_config.account_id}/pipeline/runs/{dbt_run_id}")
     print("="*50 + "\n")
-    
+
     # Initial delay to allow job to start
     print(f"Waiting {initial_delay} seconds for job to initialize...")
     time.sleep(initial_delay)
     print("Starting job monitoring...\n")
-    
+
     start_time = time.time()
     last_known_logs = ""
     last_status = None
     error_found = False
-    
+
     def print_timestamp_message(message, error=False):
         timestamp = datetime.now().strftime("%H:%M:%S")
         prefix = "❌" if error else "  "
         print(f"{timestamp}  {prefix} {message}")
-    
+
     while (time.time() - start_time) < max_duration:
         try:
             resp = requests.get(url, headers=headers)
@@ -216,21 +219,8 @@ def monitor_dbt_job(context: OpExecutionContext, dbt_run_id: int, dbt_config: DB
                     if "error" in data:
                         error_details.append(f"Error: {data['error']}")
                         
-                    # Get detailed run information and project_id
-                    project_id = None
-                    try:
-                        run_details_url = f"https://xn636.us1.dbt.com/api/v2/accounts/{dbt_config.account_id}/runs/{dbt_run_id}/"
-                        run_details_resp = requests.get(run_details_url, headers=headers)
-                        if run_details_resp.status_code == 200:
-                            run_details = run_details_resp.json().get("data", {})
-                            if "status_humanized" in run_details:
-                                error_details.append(f"Status Details: {run_details['status_humanized']}")
-                            if "status_message" in run_details:
-                                error_details.append(f"Status Message: {run_details['status_message']}")
-                            # Extract project_id from run_details
-                            project_id = run_details.get("project_id")
-                    except Exception as e:
-                        error_details.append(f"Failed to fetch detailed status: {str(e)}")
+                    # Get project_id from environment variable
+                    project_id = os.getenv("DBT_CLOUD_PROJECT_ID", "70471823469423")
                     
                     # Look for specific error patterns in logs
                     if current_logs:
@@ -265,10 +255,7 @@ def monitor_dbt_job(context: OpExecutionContext, dbt_run_id: int, dbt_config: DB
                         print("\n=== DBT Cloud Error Details ===")
                         print("\n".join(error_details))
                         print("\nView full logs at:")
-                        if project_id:
-                            print(f"https://xn636.us1.dbt.com/deploy/{dbt_config.account_id}/projects/{project_id}/runs/{dbt_run_id}")
-                        else:
-                            print(f"https://xn636.us1.dbt.com/deploy/{dbt_config.account_id}/pipeline/runs/{dbt_run_id}")
+                        print(f"https://xn636.us1.dbt.com/deploy/{dbt_config.account_id}/projects/{project_id}/runs/{dbt_run_id}")
                     
                 print("="*50 + "\n")
                 
@@ -278,10 +265,11 @@ def monitor_dbt_job(context: OpExecutionContext, dbt_run_id: int, dbt_config: DB
                     "finished_at": data.get("finished_at"),
                     "job_id": data.get("job_id"),
                     "git_branch": data.get("git_branch"),
+                    "project_id": project_id,
                     "error_details": "\n".join(error_details) if not is_success else "",
                     "status_message": error_message,
                     "dbt_logs": current_logs,
-                    "run_url": f"https://xn636.us1.dbt.com/deploy/{dbt_config.account_id}/projects/{project_id}/runs/{dbt_run_id}" if project_id else f"https://xn636.us1.dbt.com/deploy/{dbt_config.account_id}/pipeline/runs/{dbt_run_id}",
+                    "run_url": f"https://xn636.us1.dbt.com/deploy/{dbt_config.account_id}/projects/{project_id}/runs/{dbt_run_id}",
                     "is_success": is_success
                 }
                 
