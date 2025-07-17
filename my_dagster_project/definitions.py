@@ -27,6 +27,7 @@
 
 # my_dagster_project/definitions.py
 from dagster import Definitions
+from dotenv import load_dotenv
 #from my_dagster_project.glue_endpoint_job     import glue_job_runner
 #from my_dagster_project.glue_trigger_job_new  import glue_trigger_job
 
@@ -35,6 +36,7 @@ from my_dagster_project.chained_dbt_jobs      import chained_dbt_jobs
 
 from my_dagster_project.dbt_cloud_job import DBTCloudResource, EmailResource
 import os
+load_dotenv()
 
 defs = Definitions(
     jobs=[

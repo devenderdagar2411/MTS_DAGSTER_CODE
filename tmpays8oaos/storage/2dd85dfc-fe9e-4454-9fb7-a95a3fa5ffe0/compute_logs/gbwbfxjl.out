@@ -1,0 +1,18 @@
+
+==================================================
+Starting DBT Job Monitoring
+==================================================
+Run ID: 70471839796260
+Account ID: 70471823461483
+Job ID: 70471823472253
+Initial delay: 60 seconds
+Check interval: 10 seconds
+DBT Cloud URL: https://xn636.us1.dbt.com/deploy/70471823461483/pipeline/runs/70471839796260
+==================================================
+
+Waiting 60 seconds for job to initialize...
+Starting job monitoring...
+
+00:00:50     Status: ERROR
+
+==================================================

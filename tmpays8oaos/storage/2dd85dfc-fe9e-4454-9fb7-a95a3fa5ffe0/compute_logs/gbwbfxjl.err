@@ -1,0 +1,44 @@
+[32m2025-07-17 23:59:49 +0530[0m - dagster - [34mDEBUG[0m - dbt_notification_job - 2dd85dfc-fe9e-4454-9fb7-a95a3fa5ffe0 - 13744 - LOGS_CAPTURED - Started capturing logs in process (pid: 13744).
+[32m2025-07-17 23:59:49 +0530[0m - dagster - [34mDEBUG[0m - dbt_notification_job - 2dd85dfc-fe9e-4454-9fb7-a95a3fa5ffe0 - 13744 - dbt_with_email_notification.monitor_dbt_job - STEP_START - Started execution of step "dbt_with_email_notification.monitor_dbt_job".
+[32m2025-07-17 23:59:49 +0530[0m - dagster - [34mDEBUG[0m - dbt_notification_job - 2dd85dfc-fe9e-4454-9fb7-a95a3fa5ffe0 - dbt_with_email_notification.monitor_dbt_job - Loading file from: C:\Users\Devender.D\Documents\GitHub\MTS_DAGSTER_CODE\tmpays8oaos\storage\2dd85dfc-fe9e-4454-9fb7-a95a3fa5ffe0\dbt_with_email_notification.trigger_dbt_cloud_job\result using PickledObjectFilesystemIOManager...
+[32m2025-07-17 23:59:49 +0530[0m - dagster - [34mDEBUG[0m - dbt_notification_job - 2dd85dfc-fe9e-4454-9fb7-a95a3fa5ffe0 - 13744 - dbt_with_email_notification.monitor_dbt_job - LOADED_INPUT - Loaded input "dbt_run_id" using input manager "io_manager", from output "result" of step "dbt_with_email_notification.trigger_dbt_cloud_job"
+[32m2025-07-17 23:59:49 +0530[0m - dagster - [34mDEBUG[0m - dbt_notification_job - 2dd85dfc-fe9e-4454-9fb7-a95a3fa5ffe0 - 13744 - dbt_with_email_notification.monitor_dbt_job - STEP_INPUT - Got input "dbt_run_id" of type "Int". (Type check passed).
+[32m2025-07-18 00:00:50 +0530[0m - dagster - [34mERROR[0m - [31mdbt_notification_job - 2dd85dfc-fe9e-4454-9fb7-a95a3fa5ffe0 - 13744 - dbt_with_email_notification.monitor_dbt_job - STEP_FAILURE - Execution of step "dbt_with_email_notification.monitor_dbt_job" failed.
+
+dagster._core.errors.DagsterExecutionStepExecutionError: Error occurred while executing op "dbt_with_email_notification.monitor_dbt_job"::
+
+UnicodeEncodeError: 'charmap' codec can't encode character '\u274c' in position 10: character maps to <undefined>
+
+Stack Trace:
+  File "C:\Users\Devender.D\AppData\Local\Programs\Python\Python313\Lib\site-packages\dagster\_core\execution\plan\utils.py", line 54, in op_execution_error_boundary
+    yield
+  File "C:\Users\Devender.D\AppData\Local\Programs\Python\Python313\Lib\site-packages\dagster\_utils\__init__.py", line 467, in iterate_with_context
+    next_output = next(iterator)
+  File "C:\Users\Devender.D\AppData\Local\Programs\Python\Python313\Lib\site-packages\dagster\_core\execution\plan\compute_generator.py", line 131, in _coerce_op_compute_fn_to_iterator
+    result = invoke_compute_fn(
+        fn, context, kwargs, context_arg_provided, config_arg_class, resource_arg_mapping
+    )
+  File "C:\Users\Devender.D\AppData\Local\Programs\Python\Python313\Lib\site-packages\dagster\_core\execution\plan\compute_generator.py", line 125, in invoke_compute_fn
+    return fn(context, **args_to_pass) if context_arg_provided else fn(**args_to_pass)
+           ~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Devender.D\Documents\GitHub\MTS_DAGSTER_CODE\my_dagster_project/dbt_cloud_job.py", line 297, in monitor_dbt_job
+    print_timestamp_message(f"Error checking job status: {str(e)}", error=True)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Devender.D\Documents\GitHub\MTS_DAGSTER_CODE\my_dagster_project/dbt_cloud_job.py", line 156, in print_timestamp_message
+    print(f"{timestamp}  {prefix} {message}")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Devender.D\AppData\Local\Programs\Python\Python313\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The above exception occurred during handling of the following exception:
+UnicodeEncodeError: 'charmap' codec can't encode character '\u274c' in position 0: character maps to <undefined>
+
+Stack Trace:
+  File "C:\Users\Devender.D\Documents\GitHub\MTS_DAGSTER_CODE\my_dagster_project/dbt_cloud_job.py", line 208, in monitor_dbt_job
+    print("\u274c DBT Job Failed!")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Devender.D\AppData\Local\Programs\Python\Python313\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[0m
